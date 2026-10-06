@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>Asistencia QR JLM</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      text-align: center;
+    }
+
+    .contenedor {
+      max-width: 600px;
+      margin: auto;
+      padding: 15px;
+    }
+
+    h1 {
+      margin: 10px 0 5px;
+      font-size: 26px;
+    }
+
+    .subtitulo {
+      margin-bottom: 15px;
+      color: #666;
+    }
+
+    #reader {
+      background: white;
+      border-radius: 15px;
+      overflow: hidden;
+    }
+
+    #resultado {
+      margin-top: 15px;
+      padding: 22px 15px;
+      background: white;
+      border-radius: 15px;
+      min-height: 100px;
+      font-size: 20px;
+      line-height: 1.4;
+    }
+
+    .presente {
+      background: #e8f5e9 !important;
+      color: #1b5e20;
+    }
+
+    .retardo {
+      background: #fff3e0 !important;
+      color: #e65100;
+    }
+
+    .duplicado {
+      background: #fff8e1 !important;
+      color: #e65100;
+    }
+
+    .error {
+      background: #ffebee !important;
+      color: #b71c1c;
+    }
+
+    .procesando {
+      background: #e3f2fd !important;
+      color: #0d47a1;
+    }
+
+    .estado {
+      font-size: 30px;
+      font-weight: bold;
+    }
+
+    .nombre {
+      margin-top: 8px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .datos {
+      margin-top: 5px;
+      font-size: 17px;
+    }
+
+    .contador {
+      margin-top: 15px;
+      padding: 12px;
+      background: white;
+      border-radius: 12px;
+      font-size: 18px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="contenedor">
+
+  <h1>Asistencia QR JLM</h1>
+
+  <div class="subtitulo">
+    Secundaria No. 6 José Lezama Lima
+  </div>
+
+  <div id="reader"></div>
+
+  <div id="resultado">
+    <div class="estado">LISTO</div>
+    Acerque un gafete a la cámara
+  </div>
+
+  <div class="contador">
+    Registros nuevos:
+    <strong id="contador">0</strong>
+  </div>
+
+</div>
+
+
+<script>
+
+const API =
+  "https://script.google.com/macros/s/AKfycbw7rztZJND6Ot7bFGRSS7WK1G9d3r3p830z8BeCJM6nW4Sc2fGayDlJXQ88iZcf6VGc3Q/exec";
+
+let bloqueado = false;
+let ultimoId = "";
+let ultimoMomento = 0;
+let registros = 0;
+
+
+/* ---------------------------
+   EXTRAER ID DEL QR
+---------------------------- */
+
+function extraerId(texto) {
+
+  texto = String(texto || "").trim();
+
+  const coincidencia =
+    texto.match(/JLM-G\d{2}-\d{3}/i);
+
+  if (coincidencia) {
+    return coincidencia[0].toUpperCase();
+  }
+
+  return null;
+}
+
+
+/* ---------------------------
+   QR DETECTADO
+---------------------------- */
+
+async function qrDetectado(texto) {
+
+  const id = extraerId(texto);
+
+  if (!id) {
+
+    mostrar(
+      "QR NO VÁLIDO",
+      "El código no corresponde al padrón.",
+      "",
+      "error"
+    );
+
+    return;
+  }
+
+
+  const ahora = Date.now();
+
+  /*
+   * Evita que la cámara lea repetidamente
+   * el mismo QR en pocos segundos.
+   */
+  if (
+    id === ultimoId &&
+    ahora - ultimoMomento < 4000
+  ) {
+    return;
+  }
+
+
+  if (bloqueado) {
+    return;
+  }
+
+
+  bloqueado = true;
+  ultimoId = id;
+  ultimoMomento = ahora;
+
+
+  mostrar(
+    "PROCESANDO",
+    id,
+    "Espere...",
+    "procesando"
+  );
+
+
+  try {
+
+    const url =
+      API +
+      "?api=registrar&id=" +
+      encodeURIComponent(id) +
+      "&t=" +
+      Date.now();
+
+
+    const respuesta =
+      await fetch(url);
+
+
+    if (!respuesta.ok) {
+      throw new Error(
+        "Respuesta HTTP " +
+        respuesta.status
+      );
+    }
+
+
+    const datos =
+      await respuesta.json();
+
+
+    procesarRespuesta(datos);
+
+
+  } catch (error) {
+
+    mostrar(
+      "ERROR DE CONEXIÓN",
+      "No se pudo registrar.",
+      error.message,
+      "error"
+    );
+
+  }
+
+
+  /*
+   * Después de un momento queda
+   * preparado para el siguiente alumno.
+   */
+  setTimeout(function() {
+
+    bloqueado = false;
+
+  }, 1200);
+}
+
+
+/* ---------------------------
+   PROCESAR RESPUESTA
+---------------------------- */
+
+function procesarRespuesta(datos) {
+
+  if (!datos) {
+
+    mostrar(
+      "ERROR",
+      "Respuesta no válida.",
+      "",
+      "error"
+    );
+
+    return;
+  }
+
+
+  if (datos.estado === "PRESENTE") {
+
+    registros++;
+
+    actualizarContador();
+
+    mostrar(
+      "✓ PRESENTE",
+      datos.nombre,
+      datos.grupo +
+      " · Lista " +
+      datos.numeroLista +
+      "<br>" +
+      datos.hora,
+      "presente"
+    );
+
+    beep(900);
+
+    return;
+  }
+
+
+  if (datos.estado === "RETARDO") {
+
+    registros++;
+
+    actualizarContador();
+
+    mostrar(
+      "⏰ RETARDO",
+      datos.nombre,
+      datos.grupo +
+      " · Lista " +
+      datos.numeroLista +
+      "<br>" +
+      datos.hora,
+      "retardo"
+    );
+
+    beep(650);
+
+    return;
+  }
+
+
+  if (datos.estado === "DUPLICADO") {
+
+    mostrar(
+      "⚠ YA REGISTRADO",
+      datos.nombre,
+      datos.grupo +
+      "<br>Registro anterior: " +
+      datos.hora,
+      "duplicado"
+    );
+
+    beep(400);
+
+    return;
+  }
+
+
+  mostrar(
+    "QR NO VÁLIDO",
+    datos.mensaje || "No fue posible registrar.",
+    "",
+    "error"
+  );
+}
+
+
+/* ---------------------------
+   MOSTRAR RESULTADO
+---------------------------- */
+
+function mostrar(
+  estado,
+  nombre,
+  detalles,
+  clase
+) {
+
+  const caja =
+    document.getElementById("resultado");
+
+  caja.className = clase || "";
+
+  caja.innerHTML =
+    '<div class="estado">' +
+    estado +
+    '</div>' +
+
+    '<div class="nombre">' +
+    (nombre || "") +
+    '</div>' +
+
+    '<div class="datos">' +
+    (detalles || "") +
+    '</div>';
+}
+
+
+/* ---------------------------
+   CONTADOR
+---------------------------- */
+
+function actualizarContador() {
+
+  document.getElementById(
+    "contador"
+  ).textContent = registros;
+}
+
+
+/* ---------------------------
+   SONIDO
+---------------------------- */
+
+function beep(frecuencia) {
+
+  try {
+
+    const AudioContext =
+      window.AudioContext ||
+      window.webkitAudioContext;
+
+    const contexto =
+      new AudioContext();
+
+    const oscilador =
+      contexto.createOscillator();
+
+    const volumen =
+      contexto.createGain();
+
+    oscilador.connect(volumen);
+    volumen.connect(contexto.destination);
+
+    oscilador.frequency.value =
+      frecuencia;
+
+    volumen.gain.value = 0.08;
+
+    oscilador.start();
+
+    setTimeout(function() {
+
+      oscilador.stop();
+      contexto.close();
+
+    }, 120);
+
+  } catch (e) {}
+}
+
+
+/* ---------------------------
+   INICIAR CÁMARA
+---------------------------- */
+
+function iniciarScanner() {
+
+  const scanner =
+    new Html5QrcodeScanner(
+
+      "reader",
+
+      {
+        fps: 12,
+
+        qrbox: {
+          width: 260,
+          height: 260
+        },
+
+        rememberLastUsedCamera: true,
+
+        supportedScanTypes: [
+          Html5QrcodeScanType
+            .SCAN_TYPE_CAMERA
+        ]
+      },
+
+      false
+    );
+
+
+  scanner.render(
+    qrDetectado,
+    function() {
+      /*
+       * Los intentos de lectura fallidos
+       * son normales mientras la cámara
+       * busca un QR.
+       */
+    }
+  );
+}
+
+
+iniciarScanner();
+
+</script>
+
+</body>
+</html>
